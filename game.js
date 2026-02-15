@@ -26,11 +26,11 @@ class GestikTrainingGame {
             { emoji: '💪', name: 'Muskel zeigen', detect: (h) => this.detectMuscle(h) }
         ];
 
-        // Difficulty settings
+        // Difficulty settings - VERY FORGIVING for seniors!
         this.difficultySettings = {
-            easy: { timePerGesture: 15, requiredHoldTime: 1.5, totalRounds: 8 },
-            medium: { timePerGesture: 10, requiredHoldTime: 1.0, totalRounds: 10 },
-            hard: { timePerGesture: 7, requiredHoldTime: 0.8, totalRounds: 12 }
+            easy: { timePerGesture: 20, requiredHoldTime: 0.5, totalRounds: 6, fuzzyThreshold: 0.4 },
+            medium: { timePerGesture: 15, requiredHoldTime: 0.6, totalRounds: 8, fuzzyThreshold: 0.5 },
+            hard: { timePerGesture: 10, requiredHoldTime: 0.8, totalRounds: 10, fuzzyThreshold: 0.6 }
         };
 
         // Encouraging messages
@@ -361,22 +361,43 @@ class GestikTrainingGame {
             console.error('Gesture detection error:', e);
         }
 
-        // Update match visualization
-        if (isMatch) {
-            this.matchPercentage = Math.min(100, this.matchPercentage + 15);
+        // FUZZY MATCHING - be very forgiving!
+        // Any hand movement counts as partial progress
+        if (relevantHands.length > 0) {
+            // Base progress just for showing hand
+            this.matchPercentage = Math.min(100, this.matchPercentage + 8);
             
-            // Track hold time
-            if (!this.gestureStartTime) {
-                this.gestureStartTime = Date.now();
+            if (isMatch) {
+                // Fast progress on match
+                this.matchPercentage = Math.min(100, this.matchPercentage + 25);
+                
+                // Track hold time
+                if (!this.gestureStartTime) {
+                    this.gestureStartTime = Date.now();
+                }
+                this.gestureHoldTime = (Date.now() - this.gestureStartTime) / 1000;
+                
+                // Check if held long enough - VERY SHORT hold time!
+                if (this.gestureHoldTime >= this.settings.requiredHoldTime) {
+                    this.gestureRecognized();
+                }
+            } else {
+                // Partial match - still give some credit for trying!
+                // Reset hold time but keep some progress
+                this.gestureStartTime = null;
+                this.gestureHoldTime = 0;
+                // Slow decay - don't punish too hard
+                this.matchPercentage = Math.max(30, this.matchPercentage - 2);
             }
-            this.gestureHoldTime = (Date.now() - this.gestureStartTime) / 1000;
             
-            // Check if held long enough
-            if (this.gestureHoldTime >= this.settings.requiredHoldTime) {
+            // AUTO-SUCCESS after showing hand for a while (motivation boost!)
+            if (this.matchPercentage >= 95 && !isMatch) {
+                // If they've been trying for a while, give them the point anyway
                 this.gestureRecognized();
             }
         } else {
-            this.matchPercentage = Math.max(0, this.matchPercentage - 5);
+            // No hand visible - slow decay
+            this.matchPercentage = Math.max(0, this.matchPercentage - 3);
             this.gestureStartTime = null;
             this.gestureHoldTime = 0;
         }
@@ -483,27 +504,37 @@ class GestikTrainingGame {
         this.showScreen('result');
     }
 
-    // ========== GESTURE DETECTION FUNCTIONS ==========
+    // ========== FUZZY GESTURE DETECTION - VERY FORGIVING! ==========
 
-    // Helper: Check if finger is extended
+    // Helper: Check if finger is extended (with tolerance)
     isFingerExtended(landmarks, fingerTip, fingerPip) {
-        return landmarks[fingerTip].y < landmarks[fingerPip].y;
+        // FUZZY: Allow some tolerance - finger doesn't need to be perfectly straight
+        const tipY = landmarks[fingerTip].y;
+        const pipY = landmarks[fingerPip].y;
+        // Tolerance: tip can be slightly below pip
+        return tipY < pipY + 0.05;
     }
 
-    // Helper: Check if thumb is extended (different logic due to orientation)
+    // Helper: Check if finger is curled (with tolerance)
+    isFingerCurled(landmarks, fingerTip, fingerPip) {
+        const tipY = landmarks[fingerTip].y;
+        const pipY = landmarks[fingerPip].y;
+        // FUZZY: Doesn't need to be fully curled
+        return tipY > pipY - 0.08;
+    }
+
+    // Helper: Check if thumb is extended (VERY tolerant)
     isThumbExtended(landmarks) {
-        // Thumb tip should be further from palm than thumb IP
         const thumbTip = landmarks[4];
         const thumbIp = landmarks[3];
-        const wrist = landmarks[0];
+        const thumbMcp = landmarks[2];
         
-        const tipDist = Math.abs(thumbTip.x - wrist.x);
-        const ipDist = Math.abs(thumbIp.x - wrist.x);
-        
-        return tipDist > ipDist;
+        // FUZZY: Just check if thumb is somewhat away from palm
+        const tipDist = Math.abs(thumbTip.x - thumbMcp.x) + Math.abs(thumbTip.y - thumbMcp.y);
+        return tipDist > 0.08; // Very low threshold
     }
 
-    // Helper: Get finger states
+    // Helper: Get finger states (FUZZY version)
     getFingerStates(landmarks) {
         return {
             thumb: this.isThumbExtended(landmarks),
@@ -514,128 +545,138 @@ class GestikTrainingGame {
         };
     }
 
-    // 👍 Thumbs Up
+    // Count extended fingers (helper for fuzzy matching)
+    countExtendedFingers(landmarks) {
+        const fingers = this.getFingerStates(landmarks);
+        let count = 0;
+        if (fingers.thumb) count++;
+        if (fingers.index) count++;
+        if (fingers.middle) count++;
+        if (fingers.ring) count++;
+        if (fingers.pinky) count++;
+        return count;
+    }
+
+    // 👍 Thumbs Up - FUZZY
     detectThumbsUp(landmarks) {
-        const fingers = this.getFingerStates(landmarks);
         const thumbTip = landmarks[4];
         const wrist = landmarks[0];
+        const indexTip = landmarks[8];
         
-        // Thumb up, other fingers closed
-        return fingers.thumb && 
-               !fingers.index && !fingers.middle && !fingers.ring && !fingers.pinky &&
-               thumbTip.y < wrist.y;
+        // FUZZY: Thumb should be roughly above wrist, other fingers roughly down
+        const thumbUp = thumbTip.y < wrist.y + 0.1;
+        const otherFingersDown = indexTip.y > thumbTip.y - 0.05;
+        
+        return thumbUp && otherFingersDown;
     }
 
-    // 👎 Thumbs Down
+    // 👎 Thumbs Down - FUZZY
     detectThumbsDown(landmarks) {
-        const fingers = this.getFingerStates(landmarks);
         const thumbTip = landmarks[4];
         const wrist = landmarks[0];
+        const indexTip = landmarks[8];
         
-        return fingers.thumb && 
-               !fingers.index && !fingers.middle && !fingers.ring && !fingers.pinky &&
-               thumbTip.y > wrist.y;
+        // FUZZY: Thumb below wrist level
+        const thumbDown = thumbTip.y > wrist.y - 0.1;
+        const otherFingersUp = indexTip.y < thumbTip.y + 0.05;
+        
+        return thumbDown && otherFingersUp;
     }
 
-    // ✌️ Peace/Victory
+    // ✌️ Peace/Victory - FUZZY
     detectPeace(landmarks) {
         const fingers = this.getFingerStates(landmarks);
-        return fingers.index && fingers.middle && 
-               !fingers.ring && !fingers.pinky;
+        // FUZZY: Just need index and middle up, ignore others
+        return fingers.index && fingers.middle;
     }
 
-    // 🤙 Hang Loose (Shaka)
+    // 🤙 Hang Loose (Shaka) - FUZZY
     detectHangLoose(landmarks) {
         const fingers = this.getFingerStates(landmarks);
-        return fingers.thumb && fingers.pinky && 
-               !fingers.index && !fingers.middle && !fingers.ring;
+        // FUZZY: Thumb and pinky extended - other fingers don't matter as much
+        return fingers.thumb && fingers.pinky;
     }
 
-    // 👊 Fist
+    // 👊 Fist - FUZZY
     detectFist(landmarks) {
-        const fingers = this.getFingerStates(landmarks);
-        return !fingers.thumb && !fingers.index && !fingers.middle && 
-               !fingers.ring && !fingers.pinky;
+        // FUZZY: Most fingers should be curled (3+ fingers curled counts)
+        const extended = this.countExtendedFingers(landmarks);
+        return extended <= 2; // Allow 1-2 fingers slightly extended
     }
 
-    // ✋ Open Hand / 🖐️ High Five
+    // ✋ Open Hand / 🖐️ High Five - FUZZY
     detectOpenHand(landmarks) {
-        const fingers = this.getFingerStates(landmarks);
-        return fingers.thumb && fingers.index && fingers.middle && 
-               fingers.ring && fingers.pinky;
+        // FUZZY: Most fingers extended (3+ is enough)
+        const extended = this.countExtendedFingers(landmarks);
+        return extended >= 3;
     }
 
-    // ☝️ Pointing
+    // ☝️ Pointing - FUZZY
     detectPointing(landmarks) {
         const fingers = this.getFingerStates(landmarks);
-        return fingers.index && !fingers.middle && !fingers.ring && !fingers.pinky;
+        // FUZZY: Index finger up is the main requirement
+        return fingers.index;
     }
 
-    // 🤞 Crossed Fingers (simplified - just two fingers close together and extended)
+    // 🤞 Crossed Fingers - FUZZY (simplified to just peace sign)
     detectCrossedFingers(landmarks) {
-        const fingers = this.getFingerStates(landmarks);
-        if (!fingers.index || !fingers.middle || fingers.ring || fingers.pinky) return false;
-        
-        // Check if index and middle fingers are close
-        const indexTip = landmarks[8];
-        const middleTip = landmarks[12];
-        const distance = Math.sqrt(
-            Math.pow(indexTip.x - middleTip.x, 2) + 
-            Math.pow(indexTip.y - middleTip.y, 2)
-        );
-        
-        return distance < 0.05;
+        // FUZZY: Same as peace - too hard to detect actual crossing
+        return this.detectPeace(landmarks);
     }
 
-    // 👌 OK Sign
+    // 👌 OK Sign - FUZZY
     detectOK(landmarks) {
         const thumbTip = landmarks[4];
         const indexTip = landmarks[8];
-        const fingers = this.getFingerStates(landmarks);
         
-        // Thumb and index touching, other fingers extended
+        // FUZZY: Thumb and index finger somewhat close
         const distance = Math.sqrt(
             Math.pow(thumbTip.x - indexTip.x, 2) + 
             Math.pow(thumbTip.y - indexTip.y, 2)
         );
         
-        return distance < 0.08 && fingers.middle && fingers.ring && fingers.pinky;
+        // VERY tolerant distance threshold
+        return distance < 0.15;
     }
 
-    // ========== ARM GESTURE DETECTION ==========
+    // ========== ARM GESTURE DETECTION - FUZZY ==========
 
-    // 🙌 Hands Up
+    // 🙌 Hands Up - FUZZY (works with 1 hand too!)
     detectHandsUp(results) {
-        if (!results.multiHandLandmarks || results.multiHandLandmarks.length < 2) return false;
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return false;
         
-        // Both hands should have wrists above a certain point
-        let handsUp = 0;
+        // FUZZY: Even ONE hand up counts!
         for (const landmarks of results.multiHandLandmarks) {
-            if (landmarks[0].y < 0.4) handsUp++;
+            if (landmarks[0].y < 0.5) return true; // Very tolerant threshold
         }
-        return handsUp >= 2;
+        return false;
     }
 
-    // 👐 Hands Open
+    // 👐 Hands Open - FUZZY (works with 1 hand too!)
     detectHandsOpen(results) {
-        if (!results.multiHandLandmarks || results.multiHandLandmarks.length < 2) return false;
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return false;
         
-        let openHands = 0;
+        // FUZZY: One open hand is enough
         for (const landmarks of results.multiHandLandmarks) {
-            if (this.detectOpenHand(landmarks)) openHands++;
+            if (this.detectOpenHand(landmarks)) return true;
         }
-        return openHands >= 2;
+        return false;
     }
 
-    // 🙏 Hands Together
+    // 🙏 Hands Together - FUZZY
     detectHandsTogether(results) {
-        if (!results.multiHandLandmarks || results.multiHandLandmarks.length < 2) return false;
+        // FUZZY: If two hands visible and somewhat close, count it
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length < 2) {
+            // Fallback: even one hand in center of screen counts
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 1) {
+                const wrist = results.multiHandLandmarks[0][0];
+                return wrist.x > 0.3 && wrist.x < 0.7; // Hand in center
+            }
+            return false;
+        }
         
-        // Check if palms are close together
         const hand1 = results.multiHandLandmarks[0];
         const hand2 = results.multiHandLandmarks[1];
-        
-        // Compare middle finger MCP joints (palm center)
         const palm1 = hand1[9];
         const palm2 = hand2[9];
         
@@ -644,31 +685,30 @@ class GestikTrainingGame {
             Math.pow(palm1.y - palm2.y, 2)
         );
         
-        return distance < 0.15;
+        return distance < 0.3; // VERY tolerant
     }
 
-    // 👋 Waving
+    // 👋 Waving - FUZZY
     detectWaving(results) {
         if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return false;
         
         const hand = results.multiHandLandmarks[0];
         const wrist = hand[0];
         
-        // Track wrist position history
         this.wavingHistory.push(wrist.x);
-        if (this.wavingHistory.length > 15) {
+        if (this.wavingHistory.length > 10) {
             this.wavingHistory.shift();
         }
         
-        if (this.wavingHistory.length < 10) return false;
+        // FUZZY: Only need minimal movement
+        if (this.wavingHistory.length < 5) return false;
         
-        // Check for oscillation
         let directionChanges = 0;
         let lastDirection = 0;
         
         for (let i = 1; i < this.wavingHistory.length; i++) {
             const diff = this.wavingHistory[i] - this.wavingHistory[i-1];
-            const direction = diff > 0.01 ? 1 : (diff < -0.01 ? -1 : 0);
+            const direction = diff > 0.005 ? 1 : (diff < -0.005 ? -1 : 0); // Very sensitive
             
             if (direction !== 0 && direction !== lastDirection && lastDirection !== 0) {
                 directionChanges++;
@@ -676,17 +716,17 @@ class GestikTrainingGame {
             if (direction !== 0) lastDirection = direction;
         }
         
-        return directionChanges >= 3;
+        return directionChanges >= 1; // Just ONE direction change is enough!
     }
 
-    // 💪 Muscle/Flexing
+    // 💪 Muscle/Flexing - FUZZY
     detectMuscle(results) {
         if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return false;
         
-        // Check for fist with arm bent (wrist higher than usual)
+        // FUZZY: Any hand visible in upper half of screen counts!
         for (const landmarks of results.multiHandLandmarks) {
             const isFist = this.detectFist(landmarks);
-            const wristHigh = landmarks[0].y < 0.5;
+            const wristVisible = landmarks[0].y < 0.7; // Very tolerant
             
             if (isFist && wristHigh) return true;
         }
