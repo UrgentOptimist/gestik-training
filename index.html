@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#3F51B5">
+    <meta name="description" content="Gestik-Training für Senioren - Handzeichen und Bewegungen üben">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <title>Gestik-Training</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Start Screen -->
+        <div id="start-screen" class="screen active">
+            <h1>🤚 Gestik-Training</h1>
+            <p class="subtitle">Mache die Handzeichen nach!</p>
+            
+            <div class="mode-select">
+                <button class="mode-btn selected" data-mode="hands">
+                    <span class="mode-icon">✋</span>
+                    <span class="mode-label">Handzeichen</span>
+                </button>
+                <button class="mode-btn" data-mode="arms">
+                    <span class="mode-icon">💪</span>
+                    <span class="mode-label">Armbewegungen</span>
+                </button>
+            </div>
+
+            <div class="hand-select">
+                <label>Welche Hand trainieren?</label>
+                <div class="hand-buttons">
+                    <button class="hand-btn selected" data-hand="right">Rechts 👉</button>
+                    <button class="hand-btn" data-hand="left">👈 Links</button>
+                    <button class="hand-btn" data-hand="both">Beide 🙌</button>
+                </div>
+            </div>
+
+            <div class="difficulty-select">
+                <label>Schwierigkeit:</label>
+                <select id="difficulty">
+                    <option value="easy">Leicht (viel Zeit)</option>
+                    <option value="medium">Mittel</option>
+                    <option value="hard">Schwer (wenig Zeit)</option>
+                </select>
+            </div>
+
+            <button id="start-btn" class="big-button">📷 Kamera starten</button>
+            <p class="hint">Die App nutzt deine Kamera um die Gesten zu erkennen. Keine Daten werden gespeichert.</p>
+        </div>
+
+        <!-- Game Screen -->
+        <div id="game-screen" class="screen">
+            <div id="game-header">
+                <div class="stat">
+                    <span class="label">Punkte</span>
+                    <span id="score">0</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Zeit</span>
+                    <span id="timer">10</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Runde</span>
+                    <span id="round">1/10</span>
+                </div>
+            </div>
+
+            <div id="game-content">
+                <div id="target-gesture">
+                    <span class="instruction" id="hand-instruction">Rechte Hand:</span>
+                    <span class="gesture-emoji" id="target-emoji">👍</span>
+                    <span class="gesture-name" id="target-name">Daumen hoch</span>
+                </div>
+
+                <div id="camera-container">
+                    <video id="camera" autoplay playsinline></video>
+                    <canvas id="overlay"></canvas>
+                    <div id="detection-status">Warte auf Hand...</div>
+                </div>
+
+                <div id="feedback-area">
+                    <div id="progress-ring">
+                        <svg viewBox="0 0 100 100">
+                            <circle class="bg" cx="50" cy="50" r="45"/>
+                            <circle class="progress" cx="50" cy="50" r="45" id="progress-circle"/>
+                        </svg>
+                        <span id="match-percent">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="gesture-success" class="hidden">
+                <span class="success-emoji">🎉</span>
+                <span class="success-text">Super!</span>
+            </div>
+
+            <button id="pause-btn" class="pause-button">⏸️</button>
+        </div>
+
+        <!-- Pause Screen -->
+        <div id="pause-screen" class="screen overlay">
+            <div class="overlay-content">
+                <h2>⏸️ Pause</h2>
+                <button id="resume-btn" class="big-button">▶️ Weiterspielen</button>
+                <button id="quit-btn" class="big-button secondary">🏠 Beenden</button>
+            </div>
+        </div>
+
+        <!-- Result Screen -->
+        <div id="result-screen" class="screen">
+            <h1 id="result-title">🎉 Toll gemacht!</h1>
+            <div class="results">
+                <div class="result-item">
+                    <span class="result-label">Punkte</span>
+                    <span id="final-score" class="result-value">0</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">Erkannt</span>
+                    <span id="final-recognized" class="result-value">0/10</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">Genauigkeit</span>
+                    <span id="final-accuracy" class="result-value">0%</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">Beste Zeit</span>
+                    <span id="final-best-time" class="result-value">-</span>
+                </div>
+            </div>
+            <p id="encouragement" class="encouragement"></p>
+            <button id="replay-btn" class="big-button">🔄 Nochmal spielen</button>
+            <button id="home-btn" class="big-button secondary">🏠 Zurück</button>
+        </div>
+
+        <!-- Loading Screen -->
+        <div id="loading-screen" class="screen overlay">
+            <div class="overlay-content">
+                <div class="loader"></div>
+                <p>Lade Gestenerkennung...</p>
+            </div>
+        </div>
+
+        <!-- Error Screen -->
+        <div id="error-screen" class="screen overlay">
+            <div class="overlay-content">
+                <h2>❌ Fehler</h2>
+                <p id="error-message">Kamera nicht verfügbar</p>
+                <button id="retry-btn" class="big-button">🔄 Nochmal versuchen</button>
+                <button id="back-btn" class="big-button secondary">🏠 Zurück</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MediaPipe Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="game.js"></script>
+</body>
+</html>

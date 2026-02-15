@@ -1,0 +1,15 @@
+{
+  "name": "gestik-training-app",
+  "version": "1.0.0",
+  "description": "Eine Progressive Web App (PWA) zur Rehabilitation der Hand- und Armkoordination für Senioren nach leichten Schlaganfällen.",
+  "main": "game.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "canvas": "^3.2.1"
+  }
+}
