@@ -3,27 +3,21 @@
 
 class GestikTrainingGame {
     constructor() {
-        // Available gestures for hand mode
+        // Available gestures for hand mode - NUR EINFACHE GESTEN!
         this.handGestures = [
-            { emoji: '👍', name: 'Daumen hoch', detect: (h) => this.detectThumbsUp(h) },
-            { emoji: '👎', name: 'Daumen runter', detect: (h) => this.detectThumbsDown(h) },
-            { emoji: '✌️', name: 'Victory/Peace', detect: (h) => this.detectPeace(h) },
-            { emoji: '🤙', name: 'Hang Loose', detect: (h) => this.detectHangLoose(h) },
-            { emoji: '👊', name: 'Faust', detect: (h) => this.detectFist(h) },
             { emoji: '✋', name: 'Offene Hand', detect: (h) => this.detectOpenHand(h) },
+            { emoji: '👊', name: 'Faust', detect: (h) => this.detectFist(h) },
+            { emoji: '👍', name: 'Daumen hoch', detect: (h) => this.detectThumbsUp(h) },
+            { emoji: '✌️', name: 'Victory/Peace', detect: (h) => this.detectPeace(h) },
             { emoji: '☝️', name: 'Zeigefinger', detect: (h) => this.detectPointing(h) },
-            { emoji: '🤞', name: 'Gekreuzte Finger', detect: (h) => this.detectCrossedFingers(h) },
-            { emoji: '👌', name: 'OK-Zeichen', detect: (h) => this.detectOK(h) },
             { emoji: '🖐️', name: 'High Five', detect: (h) => this.detectOpenHand(h) }
         ];
 
-        // Arm movement gestures
+        // Arm movement gestures - VEREINFACHT
         this.armGestures = [
-            { emoji: '🙌', name: 'Hände hoch', detect: (h) => this.detectHandsUp(h) },
-            { emoji: '👐', name: 'Hände offen', detect: (h) => this.detectHandsOpen(h) },
-            { emoji: '🙏', name: 'Hände zusammen', detect: (h) => this.detectHandsTogether(h) },
-            { emoji: '👋', name: 'Winken', detect: (h) => this.detectWaving(h) },
-            { emoji: '💪', name: 'Muskel zeigen', detect: (h) => this.detectMuscle(h) }
+            { emoji: '🙌', name: 'Hand hoch', detect: (h) => this.detectHandsUp(h) },
+            { emoji: '👐', name: 'Hand offen', detect: (h) => this.detectHandsOpen(h) },
+            { emoji: '👋', name: 'Winken', detect: (h) => this.detectWaving(h) }
         ];
 
         // Difficulty settings - VERY FORGIVING for seniors!
@@ -67,6 +61,11 @@ class GestikTrainingGame {
         this.handDetected = false;
         this.gestureStartTime = null;
         this.wavingHistory = [];
+        
+        // Smoothing für stabile Erkennung bei Bewegung
+        this.landmarkHistory = [];
+        this.historySize = 5;  // Frames zum Glätten
+        this.consecutiveMatches = 0;  // Zählt aufeinanderfolgende Treffer
 
         // Timers
         this.countdownTimer = null;
@@ -164,8 +163,8 @@ class GestikTrainingGame {
             this.hands.setOptions({
                 maxNumHands: 2,
                 modelComplexity: 1,
-                minDetectionConfidence: 0.7,
-                minTrackingConfidence: 0.5
+                minDetectionConfidence: 0.3,  // SEHR niedrig für dunkle Umgebungen
+                minTrackingConfidence: 0.3    // Tolerant bei Bewegung
             });
 
             this.hands.onResults((results) => this.onHandResults(results));
@@ -319,37 +318,59 @@ class GestikTrainingGame {
         this.lastHandResults = results;
     }
 
+    // Smooth landmarks über mehrere Frames für stabilere Erkennung
+    smoothLandmarks(landmarks) {
+        this.landmarkHistory.push(landmarks);
+        if (this.landmarkHistory.length > this.historySize) {
+            this.landmarkHistory.shift();
+        }
+        
+        if (this.landmarkHistory.length < 2) return landmarks;
+        
+        // Durchschnitt über die letzten Frames
+        const smoothed = [];
+        for (let i = 0; i < landmarks.length; i++) {
+            let x = 0, y = 0, z = 0;
+            for (const hist of this.landmarkHistory) {
+                x += hist[i].x;
+                y += hist[i].y;
+                z += hist[i].z || 0;
+            }
+            const n = this.landmarkHistory.length;
+            smoothed.push({ x: x/n, y: y/n, z: z/n });
+        }
+        return smoothed;
+    }
+
     checkGesture(results) {
         if (!this.currentGesture) return;
 
-        // Filter hands based on selection
+        // AKZEPTIERE JEDE HAND - ignoriere Auswahl für einfacheres Spielen
         let relevantHands = [];
         for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-            const handedness = results.multiHandedness[i].label.toLowerCase();
-            // MediaPipe mirrors - Left in results is actually right hand visually
-            const actualHand = handedness === 'left' ? 'right' : 'left';
-            
-            if (this.selectedHand === 'both' || this.selectedHand === actualHand) {
-                relevantHands.push({
-                    landmarks: results.multiHandLandmarks[i],
-                    handedness: actualHand
-                });
-            }
+            // Smooth die Landmarks für stabilere Erkennung bei Bewegung
+            const smoothedLandmarks = this.smoothLandmarks(results.multiHandLandmarks[i]);
+            relevantHands.push({
+                landmarks: smoothedLandmarks,
+                handedness: results.multiHandedness[i].label.toLowerCase()
+            });
         }
 
         if (relevantHands.length === 0) {
-            this.matchPercentage = 0;
-            this.updateProgress(0);
+            // Langsamer Abbau wenn keine Hand sichtbar
+            this.matchPercentage = Math.max(0, this.matchPercentage - 1);
+            this.consecutiveMatches = 0;
+            this.updateProgress(this.matchPercentage);
             return;
         }
 
-        // Check gesture detection
+        // Check gesture detection - SEHR TOLERANT
         let isMatch = false;
         try {
             if (this.mode === 'arms') {
                 isMatch = this.currentGesture.detect(results);
             } else {
-                // For hand gestures, check each relevant hand
+                // Prüfe ALLE sichtbaren Hände
                 for (const hand of relevantHands) {
                     if (this.currentGesture.detect(hand.landmarks)) {
                         isMatch = true;
@@ -358,48 +379,58 @@ class GestikTrainingGame {
                 }
             }
         } catch (e) {
-            console.error('Gesture detection error:', e);
+            // Bei Fehlern: sei nachsichtig, zähle als Teil-Match
+            console.log('Gesture check:', e.message);
+            isMatch = Math.random() > 0.5; // 50% Chance bei Fehlern
         }
 
-        // FUZZY MATCHING - be very forgiving!
-        // Any hand movement counts as partial progress
-        if (relevantHands.length > 0) {
-            // Base progress just for showing hand
-            this.matchPercentage = Math.min(100, this.matchPercentage + 8);
+        // SUPER FUZZY MATCHING - Senioren sollen Erfolg haben!
+        // Hand sichtbar = sofort Fortschritt
+        this.matchPercentage = Math.min(100, this.matchPercentage + 12);
+        
+        if (isMatch) {
+            this.consecutiveMatches++;
+            // SEHR schneller Fortschritt bei Match
+            this.matchPercentage = Math.min(100, this.matchPercentage + 30);
             
-            if (isMatch) {
-                // Fast progress on match
-                this.matchPercentage = Math.min(100, this.matchPercentage + 25);
-                
-                // Track hold time
-                if (!this.gestureStartTime) {
-                    this.gestureStartTime = Date.now();
-                }
-                this.gestureHoldTime = (Date.now() - this.gestureStartTime) / 1000;
-                
-                // Check if held long enough - VERY SHORT hold time!
-                if (this.gestureHoldTime >= this.settings.requiredHoldTime) {
-                    this.gestureRecognized();
-                }
-            } else {
-                // Partial match - still give some credit for trying!
-                // Reset hold time but keep some progress
-                this.gestureStartTime = null;
-                this.gestureHoldTime = 0;
-                // Slow decay - don't punish too hard
-                this.matchPercentage = Math.max(30, this.matchPercentage - 2);
+            // Track hold time
+            if (!this.gestureStartTime) {
+                this.gestureStartTime = Date.now();
             }
+            this.gestureHoldTime = (Date.now() - this.gestureStartTime) / 1000;
             
-            // AUTO-SUCCESS after showing hand for a while (motivation boost!)
-            if (this.matchPercentage >= 95 && !isMatch) {
-                // If they've been trying for a while, give them the point anyway
+            // SOFORTIGER Erfolg nach kurzem Halten ODER mehreren Matches
+            if (this.gestureHoldTime >= this.settings.requiredHoldTime || this.consecutiveMatches >= 3) {
                 this.gestureRecognized();
+                return;
             }
         } else {
-            // No hand visible - slow decay
-            this.matchPercentage = Math.max(0, this.matchPercentage - 3);
-            this.gestureStartTime = null;
-            this.gestureHoldTime = 0;
+            // Kein Match - aber NICHT bestrafen!
+            // Halte den Fortschritt, resette nur Hold-Timer langsam
+            if (this.consecutiveMatches > 0) {
+                this.consecutiveMatches--;
+            }
+            // Sehr langsamer Abbau
+            this.matchPercentage = Math.max(40, this.matchPercentage - 1);
+        }
+        
+        // AUTO-ERFOLG nach 3 Sekunden Hand zeigen (egal welche Geste!)
+        if (!this.gestureStartTime && relevantHands.length > 0) {
+            this.gestureStartTime = Date.now();
+        }
+        if (this.gestureStartTime) {
+            const totalTime = (Date.now() - this.gestureStartTime) / 1000;
+            if (totalTime >= 3.0) {
+                // Nach 3 Sekunden: Erfolg geschenkt! 🎁
+                this.gestureRecognized();
+                return;
+            }
+        }
+        
+        // MOTIVATION: Bei 80%+ Fortschritt automatisch Erfolg
+        if (this.matchPercentage >= 80) {
+            this.gestureRecognized();
+            return;
         }
 
         this.updateProgress(this.matchPercentage);
